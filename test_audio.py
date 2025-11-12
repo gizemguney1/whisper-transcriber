@@ -179,4 +179,5 @@ except Exception as e:
 
 
 
-Artık hata almamanız gerekiyor.
+
+
