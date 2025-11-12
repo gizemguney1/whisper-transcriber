@@ -21,7 +21,19 @@ else:
 st.title("Ses / Video Transkript Uygulaması")
 st.write("Bir dosya yükleyin veya link girin, metne çevirsin!")
 
-# Session state
+# -------------------------------
+# ✅ Session temizleme fonksiyonu
+# -------------------------------
+def reset_session():
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.session_state.clear()
+    st.experimental_rerun()
+
+if st.button("🔄 Yeni İşlem Başlat"):
+    reset_session()
+
+
 if "transcript_text" not in st.session_state:
     st.session_state.transcript_text = None
 if "audio_ready" not in st.session_state:
@@ -32,25 +44,12 @@ if "audio_path" not in st.session_state:
     st.session_state.audio_path = None
 
 
-def reset_session():
-    st.session_state.transcript_text = None
-    st.session_state.translated_text = None
-    st.session_state.audio_ready = False
-    if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
-        os.remove(st.session_state.audio_path)
-    st.session_state.audio_path = None
-    st.success("Uygulama sıfırlandı. Yeni bir medya yükleyebilirsiniz.")
-
-if st.button("Yeni İşlem Başlat"):
-    reset_session()
-    st.stop()
-
 secenek = st.radio("İşlem türü seçin:", ["Dosya yükle", "Link gir"], horizontal=True)
 temp_path = None
 audio_path = None
 
 try:
-  
+   
     if secenek == "Dosya yükle":
         uploaded_file = st.file_uploader(
             "Dosya yükle (mp3, mp4, wav, m4a, mov, avi, mpeg4)",
@@ -65,7 +64,7 @@ try:
             st.session_state.audio_ready = True
             st.session_state.audio_path = audio_path
 
-    
+  
     elif secenek == "Link gir":
         video_url = st.text_input("Video veya ses linkini buraya yapıştırın:")
 
@@ -109,7 +108,7 @@ try:
                     else:
                         st.error(f"Medya indirilirken hata oluştu: {err}")
 
-    
+  
     if st.session_state.audio_ready and st.session_state.transcript_text is None:
         if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
             with st.spinner("Transkript oluşturuluyor..."):
@@ -132,7 +131,7 @@ try:
             mime="text/plain"
         )
 
-       
+        
         if st.button("Türkçeye Çevir"):
             with st.spinner("Türkçeye çevriliyor..."):
                 translation = client.chat.completions.create(
