@@ -1,3 +1,4 @@
+
 import streamlit as st
 from openai import OpenAI
 import tempfile
@@ -6,11 +7,12 @@ import yt_dlp
 import ffmpeg
 import shutil
 
-
+# FFmpeg kontrolü
 if shutil.which("ffmpeg") is None:
     st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' (Linux) veya 'brew install ffmpeg' (macOS) komutunu çalıştırın ya da Windows için PATH'e ekleyin.")
     st.stop()
 
+# OpenAI Client kurulumu
 try:
     if "OPENAI_API_KEY" in st.secrets:
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -25,15 +27,38 @@ except Exception as e:
 st.title("Ses / Video Transkript Uygulaması")
 st.write("Bir dosya yükleyin veya link girin, metne çevirsin!")
 
-
+# *** ASIL DÜZELTME BURADA ***
+# Bu fonksiyon, SADECE hafızayı değil, aynı zamanda
+# KUTUCUKLARIN içini de boşaltır.
 def reset_session():
-    """Oturumu temizler ve doğal yenilemeye izin verir."""
+    """Oturumu ve widget'ların içini temizler, sonra sayfayı yeniden başlatır."""
+    
+    # 1. Geçici dosyaların bulunduğu dizini sil (en güvenli temizlik)
+    if "temp_dir" in st.session_state and st.session_state.temp_dir:
+        try:
+            shutil.rmtree(st.session_state.temp_dir)
+        except Exception as e:
+            print(f"Geçici dizin silinemedi: {e}")
+
+    # 2. Önce tüm hafızayı sil
     st.session_state.clear()
+    
+    # 3. Widget'ların içini boşaltmak için anahtarlarını 'None' yap
+    # (Bu satırlar 'clear'dan sonra bile çalışır, çünkü widget'lar yeniden çizilecek)
+    st.session_state.file_uploader_key = None
+    st.session_state.video_url_key = "" # text_input için "" (boş string)
+
+    # 4. Sayfayı yeniden başlat
+    # Eğer st.rerun() hata veriyorsa, terminale 'pip install --upgrade streamlit' 
+    # yazarak Streamlit'i güncellemeniz GEREKİR. Bu modern komuttur.
+    st.rerun()
+# *** DÜZELTME SONU ***
 
 
 if st.button("🔄 Yeni İşlem Başlat"):
     reset_session()
 
+# Oturum durumu değişkenlerini başlatma (Bu kısım sıfırlamadan sonra tekrar çalışır, sorun değil)
 if "transcript_text" not in st.session_state:
     st.session_state.transcript_text = None
 if "audio_ready" not in st.session_state:
@@ -45,13 +70,22 @@ if "audio_path" not in st.session_state:
 if "temp_dir" not in st.session_state:
     st.session_state.temp_dir = None
 
+# Widget anahtarlarını başlat
+if "file_uploader_key" not in st.session_state:
+    st.session_state.file_uploader_key = None
+if "video_url_key" not in st.session_state:
+    st.session_state.video_url_key = ""
+
+
 secenek = st.radio("İşlem türü seçin:", ["Dosya yükle", "Link gir"], horizontal=True)
 
 try:
     if secenek == "Dosya yükle":
+        # *** DEĞİŞİKLİK 1: 'key' eklendi ***
         uploaded_file = st.file_uploader(
             "Dosya yükle (mp3, mp4, wav, m4a, mov, avi, mpeg4)",
-            type=["mp3", "mp4", "wav", "m4a", "mov", "avi", "mpeg4"]
+            type=["mp3", "mp4", "wav", "m4a", "mov", "avi", "mpeg4"],
+            key="file_uploader_key" # Bu anahtar, widget'ı sıfırlamamızı sağlar
         )
         if uploaded_file and not st.session_state.audio_ready:
             file_extension = os.path.splitext(uploaded_file.name)[1]
@@ -68,9 +102,14 @@ try:
             st.session_state.audio_ready = True
 
     elif secenek == "Link gir":
-        video_url = st.text_input("Video veya ses linkini buraya yapıştırın:")
+        # *** DEĞİŞİKLİK 2: 'key' eklendi ***
+        video_url = st.text_input(
+            "Video veya ses linkini buraya yapıştırın:",
+            key="video_url_key" # Bu anahtar, text kutusunu sıfırlamamızı sağlar
+        )
 
         if video_url and not st.session_state.audio_ready:
+            # (Geri kalan kodunuzun bu kısmı zaten doğruydu)
             if video_url.startswith(":ps"):
                 video_url = "https" + video_url[3:]
 
@@ -117,6 +156,7 @@ try:
                         st.error(f"Medya indirilirken hata oluştu: {err}")
 
     
+    # (Geri kalan kodunuzda değişiklik yok, hepsi doğru)
     if st.session_state.audio_ready and st.session_state.transcript_text is None:
         if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
             file_size = os.path.getsize(st.session_state.audio_path)
@@ -175,9 +215,3 @@ try:
 except Exception as e:
     st.error(f"Beklenmedik bir hata oluştu: {e}")
     st.exception(e)
-
-
-
-
-
-
