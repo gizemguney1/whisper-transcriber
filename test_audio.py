@@ -1,4 +1,3 @@
-
 import streamlit as st
 from openai import OpenAI
 import tempfile
@@ -7,211 +6,82 @@ import yt_dlp
 import ffmpeg
 import shutil
 
-# FFmpeg kontrolü
+
+# --- FFmpeg kontrolü ---
 if shutil.which("ffmpeg") is None:
-    st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' (Linux) veya 'brew install ffmpeg' (macOS) komutunu çalıştırın ya da Windows için PATH'e ekleyin.")
+    st.error("⚠️ FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' komutunu çalıştırın.")
     st.stop()
 
-# OpenAI Client kurulumu
-try:
-    if "OPENAI_API_KEY" in st.secrets:
-        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-    else:
-        st.error("Lütfen Streamlit secrets ayarlarınıza OPENAI_API_KEY ekleyin.")
-        st.stop()
-except Exception as e:
-    st.error(f"OpenAI istemcisi başlatılamadı: {e}")
+# --- OpenAI API Anahtarı kontrolü ---
+if "OPENAI_API_KEY" in st.secrets:
+    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+else:
+    st.error("Lütfen Streamlit secrets ayarlarınıza OPENAI_API_KEY ekleyin.")
     st.stop()
 
 
-st.title("Ses / Video Transkript Uygulaması")
-st.write("Bir dosya yükleyin veya link girin, metne çevirsin!")
+# --- Başlık ---
+st.title("🎧 Ses / Video Transkript Uygulaması")
+st.write("Bir dosya yükleyin veya YouTube / Instagram / TikTok linki girin, biz metne çevirelim!")
 
-# *** ASIL DÜZELTME BURADA ***
-# Bu fonksiyon, SADECE hafızayı değil, aynı zamanda
-# KUTUCUKLARIN içini de boşaltır.
-def reset_session():
-    """Oturumu ve widget'ların içini temizler, sonra sayfayı yeniden başlatır."""
-    
-    # 1. Geçici dosyaların bulunduğu dizini sil (en güvenli temizlik)
-    if "temp_dir" in st.session_state and st.session_state.temp_dir:
-        try:
-            shutil.rmtree(st.session_state.temp_dir)
-        except Exception as e:
-            print(f"Geçici dizin silinemedi: {e}")
-
-    # 2. Önce tüm hafızayı sil
-    st.session_state.clear()
-    
-    # 3. Widget'ların içini boşaltmak için anahtarlarını 'None' yap
-    # (Bu satırlar 'clear'dan sonra bile çalışır, çünkü widget'lar yeniden çizilecek)
-    st.session_state.file_uploader_key = None
-    st.session_state.video_url_key = "" # text_input için "" (boş string)
-
-    # 4. Sayfayı yeniden başlat
-    # Eğer st.rerun() hata veriyorsa, terminale 'pip install --upgrade streamlit' 
-    # yazarak Streamlit'i güncellemeniz GEREKİR. Bu modern komuttur.
-    st.rerun()
-# *** DÜZELTME SONU ***
-
-
-if st.button("🔄 Yeni İşlem Başlat"):
-    reset_session()
-
-# Oturum durumu değişkenlerini başlatma (Bu kısım sıfırlamadan sonra tekrar çalışır, sorun değil)
+# --- State başlangıcı ---
 if "transcript_text" not in st.session_state:
-    st.session_state.transcript_text = None
-if "audio_ready" not in st.session_state:
-    st.session_state.audio_ready = False
-if "translated_text" not in st.session_state:
-    st.session_state.translated_text = None
-if "audio_path" not in st.session_state:
-    st.session_state.audio_path = None
-if "temp_dir" not in st.session_state:
-    st.session_state.temp_dir = None
-
-# Widget anahtarlarını başlat
-if "file_uploader_key" not in st.session_state:
-    st.session_state.file_uploader_key = None
-if "video_url_key" not in st.session_state:
-    st.session_state.video_url_key = ""
+    st.session_state.transcript_text = ""
+if "url" not in st.session_state:
+    st.session_state.url = ""
 
 
-secenek = st.radio("İşlem türü seçin:", ["Dosya yükle", "Link gir"], horizontal=True)
+# --- Temizle butonu ---
+if st.button("🗑️ Temizle"):
+    st.session_state.transcript_text = ""
+    st.session_state.url = ""
+    st.info("Alanlar temizlendi.")
 
-try:
-    if secenek == "Dosya yükle":
-        # *** DEĞİŞİKLİK 1: 'key' eklendi ***
-        uploaded_file = st.file_uploader(
-            "Dosya yükle (mp3, mp4, wav, m4a, mov, avi, mpeg4)",
-            type=["mp3", "mp4", "wav", "m4a", "mov", "avi", "mpeg4"],
-            key="file_uploader_key" # Bu anahtar, widget'ı sıfırlamamızı sağlar
-        )
-        if uploaded_file and not st.session_state.audio_ready:
-            file_extension = os.path.splitext(uploaded_file.name)[1]
-            
-            if not st.session_state.temp_dir:
-                st.session_state.temp_dir = tempfile.mkdtemp()
-                
-            temp_path = os.path.join(st.session_state.temp_dir, f"uploaded_file{file_extension}")
-            
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.read())
-            
-            st.session_state.audio_path = temp_path
-            st.session_state.audio_ready = True
+# --- Link alanı ---
+st.session_state.url = st.text_input("🔗 Video veya ses linkini girin:", st.session_state.url)
 
-    elif secenek == "Link gir":
-        # *** DEĞİŞİKLİK 2: 'key' eklendi ***
-        video_url = st.text_input(
-            "Video veya ses linkini buraya yapıştırın:",
-            key="video_url_key" # Bu anahtar, text kutusunu sıfırlamamızı sağlar
-        )
-
-        if video_url and not st.session_state.audio_ready:
-            # (Geri kalan kodunuzun bu kısmı zaten doğruydu)
-            if video_url.startswith(":ps"):
-                video_url = "https" + video_url[3:]
-
-            with st.spinner("Medya indiriliyor..."):
-                try:
-                    if not st.session_state.temp_dir:
-                        st.session_state.temp_dir = tempfile.mkdtemp()
-                    
-                    output_path = os.path.join(st.session_state.temp_dir, "audio.%(ext)s")
-
+# --- İşlem butonu ---
+if st.button("🎙️ Transkripti Başlat"):
+    if st.session_state.url.strip() == "":
+        st.warning("Lütfen geçerli bir link girin.")
+    else:
+        with st.spinner("Ses indiriliyor ve çözümleniyor..."):
+            try:
+                with tempfile.TemporaryDirectory() as tmp_dir:
                     ydl_opts = {
                         "format": "bestaudio/best",
-                        "outtmpl": output_path,
+                        "outtmpl": os.path.join(tmp_dir, "download.%(ext)s"),
                         "quiet": True,
-                        "postprocessors": [{
-                            "key": "FFmpegExtractAudio",
-                            "preferredcodec": "mp3",
-                            "preferredquality": "192",
-                        }],
-                        "noplaylist": True,
-                        "nocheckcertificate": True,
                     }
-
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([video_url])
+                        ydl.download([st.session_state.url])
 
-                    
                     audio_path = None
-                    for f in os.listdir(st.session_state.temp_dir):
-                        if f.endswith(".mp3"):
-                            audio_path = os.path.join(st.session_state.temp_dir, f)
+                    for f in os.listdir(tmp_dir):
+                        if f.endswith((".mp3", ".m4a", ".wav", ".mp4")):
+                            audio_path = os.path.join(tmp_dir, f)
                             break
 
-                    if audio_path:
-                        st.success("Medya indirildi ve sese dönüştürüldü.")
-                        st.session_state.audio_ready = True
-                        st.session_state.audio_path = audio_path
+                    if not audio_path:
+                        st.error("Ses dosyası bulunamadı.")
                     else:
-                        st.error("Ses dosyası oluşturulamadı.")
-                except Exception as err:
-                    if "login required" in str(err).lower() or "cookies" in str(err).lower():
-                        st.error("Instagram videolarını indirmek için giriş gerekiyor. Bu içerik indirilemez.")
-                    else:
-                        st.error(f"Medya indirilirken hata oluştu: {err}")
-
-    
-    # (Geri kalan kodunuzda değişiklik yok, hepsi doğru)
-    if st.session_state.audio_ready and st.session_state.transcript_text is None:
-        if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
-            file_size = os.path.getsize(st.session_state.audio_path)
-            
-            if file_size > 25 * 1024 * 1024:
-                st.error(f"Dosya boyutu ({(file_size / 1024 / 1024):.2f} MB) 25 MB'ı aşıyor. Lütfen daha küçük bir dosya yükleyin.")
-                st.session_state.audio_ready = False
-            else:
-                with st.spinner("Transkript oluşturuluyor..."):
-                    try:
-                        with open(st.session_state.audio_path, "rb") as audio_file:
+                        with open(audio_path, "rb") as audio_file:
                             transcript = client.audio.transcriptions.create(
-                                model="whisper-1",
+                                model="gpt-4o-mini-transcribe",
                                 file=audio_file
                             )
-                        st.session_state.transcript_text = transcript.text
-                        st.success("Transkript tamamlandı.")
-                    except Exception as e:
-                        st.error(f"Transkript oluşturulurken hata oluştu: {e}")
-                        st.session_state.audio_ready = False
+                            st.session_state.transcript_text = transcript.text
+                            st.success("✅ Transkripsiyon tamamlandı!")
 
-    if st.session_state.transcript_text:
-        st.subheader("Transkript")
-        st.text_area("Metin", st.session_state.transcript_text, height=300)
-        st.download_button(
-            label="Transkripti indir (.txt)",
-            data=st.session_state.transcript_text,
-            file_name="transkript.txt",
-            mime="text/plain"
-        )
+            except Exception as e:
+                st.error(f"Bir hata oluştu: {e}")
 
-        if st.button("Türkçeye Çevir"):
-            with st.spinner("Türkçeye çevriliyor..."):
-                try:
-                    translation = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": "You are a professional translator."},
-                            {"role": "user", "content": f"Bu metni Türkçeye çevir:\n\n{st.session_state.transcript_text}"}
-                        ]
-                    )
-                    st.session_state.translated_text = translation.choices[0].message.content
-                except Exception as e:
-                    st.error(f"Çeviri sırasında hata oluştu: {e}")
-
-    if st.session_state.translated_text:
-        st.subheader("Türkçe Çeviri")
-        st.text_area("Çevrilmiş Metin", st.session_state.translated_text, height=300)
-        st.download_button(
-            label="Türkçe çeviriyi indir (.txt)",
-            data=st.session_state.translated_text,
-            file_name="transkript_turkce.txt",
-            mime="text/plain"
-        )
-
-except Exception as e:
-    st.error(f"Beklenmedik bir hata oluştu: {e}")
-    st.exception(e)
+# --- Transkript gösterimi ---
+if st.session_state.transcript_text:
+    st.subheader("📝 Çözülmüş Metin:")
+    st.text_area("Transkript", st.session_state.transcript_text, height=300)
+    st.download_button(
+        "💾 Transkripti İndir",
+        st.session_state.transcript_text,
+        file_name="transkript.txt"
+    )
