@@ -6,7 +6,7 @@ import yt_dlp
 import ffmpeg
 import shutil
 
-             
+
 if shutil.which("ffmpeg") is None:
     st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' komutunu çalıştırın.")
     st.stop()
@@ -21,20 +21,36 @@ else:
 st.title("Ses / Video Transkript Uygulaması")
 st.write("Bir dosya yükleyin veya link girin, metne çevirsin!")
 
-
+# Session state
 if "transcript_text" not in st.session_state:
     st.session_state.transcript_text = None
 if "audio_ready" not in st.session_state:
     st.session_state.audio_ready = False
 if "translated_text" not in st.session_state:
     st.session_state.translated_text = None
+if "audio_path" not in st.session_state:
+    st.session_state.audio_path = None
+
+
+def reset_session():
+    st.session_state.transcript_text = None
+    st.session_state.translated_text = None
+    st.session_state.audio_ready = False
+    if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
+        os.remove(st.session_state.audio_path)
+    st.session_state.audio_path = None
+    st.success("Uygulama sıfırlandı. Yeni bir medya yükleyebilirsiniz.")
+
+if st.button("Yeni İşlem Başlat"):
+    reset_session()
+    st.stop()
 
 secenek = st.radio("İşlem türü seçin:", ["Dosya yükle", "Link gir"], horizontal=True)
 temp_path = None
 audio_path = None
 
 try:
-    
+  
     if secenek == "Dosya yükle":
         uploaded_file = st.file_uploader(
             "Dosya yükle (mp3, mp4, wav, m4a, mov, avi, mpeg4)",
@@ -47,8 +63,9 @@ try:
                 temp_path = temp_file.name
             audio_path = temp_path
             st.session_state.audio_ready = True
+            st.session_state.audio_path = audio_path
 
-    # --- Link girme ---
+    
     elif secenek == "Link gir":
         video_url = st.text_input("Video veya ses linkini buraya yapıştırın:")
 
@@ -83,20 +100,20 @@ try:
                     if audio_path:
                         st.success("Medya indirildi ve sese dönüştürüldü.")
                         st.session_state.audio_ready = True
+                        st.session_state.audio_path = audio_path
                     else:
                         st.error("Ses dosyası oluşturulamadı.")
                 except Exception as err:
-                    # Instagram login hatalarını yakala
                     if "login required" in str(err).lower() or "cookies" in str(err).lower():
                         st.error("Instagram videolarını indirmek için giriş gerekiyor. Bu içerik indirilemez.")
                     else:
                         st.error(f"Medya indirilirken hata oluştu: {err}")
 
-   
+    
     if st.session_state.audio_ready and st.session_state.transcript_text is None:
-        if audio_path and os.path.exists(audio_path):
+        if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
             with st.spinner("Transkript oluşturuluyor..."):
-                with open(audio_path, "rb") as audio_file:
+                with open(st.session_state.audio_path, "rb") as audio_file:
                     transcript = client.audio.transcriptions.create(
                         model="whisper-1",
                         file=audio_file
@@ -115,7 +132,7 @@ try:
             mime="text/plain"
         )
 
-        # --- Türkçeye Çeviri ---
+       
         if st.button("Türkçeye Çevir"):
             with st.spinner("Türkçeye çevriliyor..."):
                 translation = client.chat.completions.create(
@@ -145,7 +162,5 @@ finally:
     try:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
-        if audio_path and os.path.exists(audio_path):
-            os.remove(audio_path)
     except Exception:
         pass
