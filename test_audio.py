@@ -6,7 +6,7 @@ import yt_dlp
 import ffmpeg
 import shutil
 
-
+             
 if shutil.which("ffmpeg") is None:
     st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' komutunu çalıştırın.")
     st.stop()
@@ -34,7 +34,7 @@ temp_path = None
 audio_path = None
 
 try:
-
+    
     if secenek == "Dosya yükle":
         uploaded_file = st.file_uploader(
             "Dosya yükle (mp3, mp4, wav, m4a, mov, avi, mpeg4)",
@@ -48,7 +48,7 @@ try:
             audio_path = temp_path
             st.session_state.audio_ready = True
 
-
+    # --- Link girme ---
     elif secenek == "Link gir":
         video_url = st.text_input("Video veya ses linkini buraya yapıştırın:")
 
@@ -57,35 +57,42 @@ try:
                 video_url = "https" + video_url[3:]
 
             with st.spinner("Medya indiriliyor..."):
-                temp_dir = tempfile.mkdtemp()
-                output_path = os.path.join(temp_dir, "audio.%(ext)s")
+                try:
+                    temp_dir = tempfile.mkdtemp()
+                    output_path = os.path.join(temp_dir, "audio.%(ext)s")
 
-                ydl_opts = {
-                    "format": "bestaudio/best",
-                    "outtmpl": output_path,
-                    "quiet": True,
-                    "postprocessors": [{
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }],
-                }
+                    ydl_opts = {
+                        "format": "bestaudio/best",
+                        "outtmpl": output_path,
+                        "quiet": True,
+                        "postprocessors": [{
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": "mp3",
+                            "preferredquality": "192",
+                        }],
+                    }
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([video_url])
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([video_url])
 
-                for f in os.listdir(temp_dir):
-                    if f.endswith(".mp3"):
-                        audio_path = os.path.join(temp_dir, f)
-                        break
+                    for f in os.listdir(temp_dir):
+                        if f.endswith(".mp3"):
+                            audio_path = os.path.join(temp_dir, f)
+                            break
 
-            if audio_path:
-                st.success("Medya indirildi ve sese dönüştürüldü.")
-                st.session_state.audio_ready = True
-            else:
-                st.error("Ses dosyası oluşturulamadı.")
+                    if audio_path:
+                        st.success("Medya indirildi ve sese dönüştürüldü.")
+                        st.session_state.audio_ready = True
+                    else:
+                        st.error("Ses dosyası oluşturulamadı.")
+                except Exception as err:
+                    # Instagram login hatalarını yakala
+                    if "login required" in str(err).lower() or "cookies" in str(err).lower():
+                        st.error("Instagram videolarını indirmek için giriş gerekiyor. Bu içerik indirilemez.")
+                    else:
+                        st.error(f"Medya indirilirken hata oluştu: {err}")
 
-
+   
     if st.session_state.audio_ready and st.session_state.transcript_text is None:
         if audio_path and os.path.exists(audio_path):
             with st.spinner("Transkript oluşturuluyor..."):
@@ -97,7 +104,7 @@ try:
                 st.session_state.transcript_text = transcript.text
                 st.success("Transkript tamamlandı.")
 
-
+    
     if st.session_state.transcript_text:
         st.subheader("Transkript")
         st.text_area("Metin", st.session_state.transcript_text, height=300)
@@ -108,7 +115,7 @@ try:
             mime="text/plain"
         )
 
-
+        # --- Türkçeye Çeviri ---
         if st.button("Türkçeye Çevir"):
             with st.spinner("Türkçeye çevriliyor..."):
                 translation = client.chat.completions.create(
@@ -120,7 +127,7 @@ try:
                 )
                 st.session_state.translated_text = translation.choices[0].message.content
 
-
+    
     if st.session_state.translated_text:
         st.subheader("Türkçe Çeviri")
         st.text_area("Çevrilmiş Metin", st.session_state.translated_text, height=300)
