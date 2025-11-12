@@ -11,24 +11,21 @@ if shutil.which("ffmpeg") is None:
     st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' komutunu çalıştırın.")
     st.stop()
 
-
 if "OPENAI_API_KEY" in st.secrets:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 else:
     st.error("Lütfen Streamlit secrets ayarlarınıza OPENAI_API_KEY ekleyin.")
     st.stop()
 
+
 st.title("Ses / Video Transkript Uygulaması")
 st.write("Bir dosya yükleyin veya link girin, metne çevirsin!")
 
-# -------------------------------
-# ✅ Session temizleme fonksiyonu
-# -------------------------------
 def reset_session():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.session_state.clear()
-    st.experimental_rerun()
+    st.rerun()  
 
 if st.button("🔄 Yeni İşlem Başlat"):
     reset_session()
@@ -64,7 +61,6 @@ try:
             st.session_state.audio_ready = True
             st.session_state.audio_path = audio_path
 
-  
     elif secenek == "Link gir":
         video_url = st.text_input("Video veya ses linkini buraya yapıştırın:")
 
@@ -108,7 +104,6 @@ try:
                     else:
                         st.error(f"Medya indirilirken hata oluştu: {err}")
 
-  
     if st.session_state.audio_ready and st.session_state.transcript_text is None:
         if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
             with st.spinner("Transkript oluşturuluyor..."):
@@ -120,7 +115,7 @@ try:
                 st.session_state.transcript_text = transcript.text
                 st.success("Transkript tamamlandı.")
 
-    
+
     if st.session_state.transcript_text:
         st.subheader("Transkript")
         st.text_area("Metin", st.session_state.transcript_text, height=300)
@@ -131,7 +126,6 @@ try:
             mime="text/plain"
         )
 
-        
         if st.button("Türkçeye Çevir"):
             with st.spinner("Türkçeye çevriliyor..."):
                 translation = client.chat.completions.create(
@@ -143,7 +137,7 @@ try:
                 )
                 st.session_state.translated_text = translation.choices[0].message.content
 
-    
+  
     if st.session_state.translated_text:
         st.subheader("Türkçe Çeviri")
         st.text_area("Çevrilmiş Metin", st.session_state.translated_text, height=300)
