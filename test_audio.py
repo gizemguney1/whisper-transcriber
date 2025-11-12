@@ -6,42 +6,50 @@ import yt_dlp
 import ffmpeg
 import shutil
 
-# FFmpeg kontrolü
+
 if shutil.which("ffmpeg") is None:
     st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' (Linux) veya 'brew install ffmpeg' (macOS) komutunu çalıştırın ya da Windows için PATH'e ekleyin.")
     st.stop()
 
-# OpenAI Client kurulumu
-if "OPENAI_API_KEY" in st.secrets:
-    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-else:
-    st.error("Lütfen Streamlit secrets ayarlarınıza OPENAI_API_KEY ekleyin.")
+
+try:
+    if "OPENAI_API_KEY" in st.secrets:
+        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    else:
+        st.error("Lütfen Streamlit secrets ayarlarınıza OPENAI_API_KEY ekleyin.")
+        st.stop()
+except Exception as e:
+    st.error(f"OpenAI istemcisi başlatılamadı: {e}")
     st.stop()
+
 
 st.title("Ses / Video Transkript Uygulaması")
 st.write("Bir dosya yükleyin veya link girin, metne çevirsin!")
 
+# *** DÜZELTME BURADA ***
+
 def reset_session():
-    """
-    Oturum durumunu temizler ve uygulamayı yeniden başlatır.
-    """
-    # Oturum durumundaki tüm anahtarları siler
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    """Oturumu temizler ve sayfayı yeniden başlatır."""
     
+    # 1. Geçici dosyaların bulunduğu dizini sil
+    if "temp_dir" in st.session_state and st.session_state.temp_dir:
+        try:
+            shutil.rmtree(st.session_state.temp_dir)
+        except Exception as e:
+            print(f"Geçici dizin silinemedi: {e}") # Sunucu loguna yaz
+
+   
+    st.session_state.clear()
     
-    if hasattr(st, "rerun"):
-        st.rerun()
-    elif hasattr(st, "experimental_rerun"):  
-        st.experimental_rerun()  
-    else:
-        st.write("Sayfayı manuel olarak yenileyin (F5).")
-  
+ 
+    st.rerun()
+
+
 
 if st.button("🔄 Yeni İşlem Başlat"):
     reset_session()
 
-# Oturum durumu değişkenlerini başlatma
+
 if "transcript_text" not in st.session_state:
     st.session_state.transcript_text = None
 if "audio_ready" not in st.session_state:
@@ -99,12 +107,14 @@ try:
                             "preferredcodec": "mp3",
                             "preferredquality": "192",
                         }],
+                        "noplaylist": True,
+                        "nocheckcertificate": True, 
                     }
 
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         ydl.download([video_url])
 
-              
+                    
                     audio_path = None
                     for f in os.listdir(st.session_state.temp_dir):
                         if f.endswith(".mp3"):
@@ -127,10 +137,10 @@ try:
     if st.session_state.audio_ready and st.session_state.transcript_text is None:
         if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
             file_size = os.path.getsize(st.session_state.audio_path)
-            # OpenAI'nin 25 MB limitini kontrol et
+           
             if file_size > 25 * 1024 * 1024:
                 st.error(f"Dosya boyutu ({(file_size / 1024 / 1024):.2f} MB) 25 MB'ı aşıyor. Lütfen daha küçük bir dosya yükleyin.")
-                st.session_state.audio_ready = False # Tekrar denemeyi engelle
+                st.session_state.audio_ready = False 
             else:
                 with st.spinner("Transkript oluşturuluyor..."):
                     try:
@@ -143,7 +153,7 @@ try:
                         st.success("Transkript tamamlandı.")
                     except Exception as e:
                         st.error(f"Transkript oluşturulurken hata oluştu: {e}")
-                        # Hata olursa sıfırlamayı kolaylaştır
+                    
                         st.session_state.audio_ready = False
 
     if st.session_state.transcript_text:
@@ -182,7 +192,4 @@ try:
 
 except Exception as e:
     st.error(f"Beklenmedik bir hata oluştu: {e}")
-
-
-
-#
+    st.exception(e) # Hatanın detayını görmek için
