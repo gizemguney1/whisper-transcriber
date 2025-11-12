@@ -11,7 +11,6 @@ if shutil.which("ffmpeg") is None:
     st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' (Linux) veya 'brew install ffmpeg' (macOS) komutunu çalıştırın ya da Windows için PATH'e ekleyin.")
     st.stop()
 
-
 try:
     if "OPENAI_API_KEY" in st.secrets:
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -26,29 +25,14 @@ except Exception as e:
 st.title("Ses / Video Transkript Uygulaması")
 st.write("Bir dosya yükleyin veya link girin, metne çevirsin!")
 
-# *** DÜZELTME BURADA ***
 
 def reset_session():
-    """Oturumu temizler ve sayfayı yeniden başlatır."""
-    
-    # 1. Geçici dosyaların bulunduğu dizini sil
-    if "temp_dir" in st.session_state and st.session_state.temp_dir:
-        try:
-            shutil.rmtree(st.session_state.temp_dir)
-        except Exception as e:
-            print(f"Geçici dizin silinemedi: {e}") # Sunucu loguna yaz
-
-   
+    """Oturumu temizler ve doğal yenilemeye izin verir."""
     st.session_state.clear()
-    
- 
-    st.rerun()
-
 
 
 if st.button("🔄 Yeni İşlem Başlat"):
     reset_session()
-
 
 if "transcript_text" not in st.session_state:
     st.session_state.transcript_text = None
@@ -72,7 +56,6 @@ try:
         if uploaded_file and not st.session_state.audio_ready:
             file_extension = os.path.splitext(uploaded_file.name)[1]
             
-            # Geçici bir dizin oluştur (daha iyi temizlik için)
             if not st.session_state.temp_dir:
                 st.session_state.temp_dir = tempfile.mkdtemp()
                 
@@ -108,7 +91,7 @@ try:
                             "preferredquality": "192",
                         }],
                         "noplaylist": True,
-                        "nocheckcertificate": True, 
+                        "nocheckcertificate": True,
                     }
 
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -137,10 +120,10 @@ try:
     if st.session_state.audio_ready and st.session_state.transcript_text is None:
         if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
             file_size = os.path.getsize(st.session_state.audio_path)
-           
+            
             if file_size > 25 * 1024 * 1024:
                 st.error(f"Dosya boyutu ({(file_size / 1024 / 1024):.2f} MB) 25 MB'ı aşıyor. Lütfen daha küçük bir dosya yükleyin.")
-                st.session_state.audio_ready = False 
+                st.session_state.audio_ready = False
             else:
                 with st.spinner("Transkript oluşturuluyor..."):
                     try:
@@ -153,7 +136,6 @@ try:
                         st.success("Transkript tamamlandı.")
                     except Exception as e:
                         st.error(f"Transkript oluşturulurken hata oluştu: {e}")
-                    
                         st.session_state.audio_ready = False
 
     if st.session_state.transcript_text:
@@ -192,4 +174,9 @@ try:
 
 except Exception as e:
     st.error(f"Beklenmedik bir hata oluştu: {e}")
-    st.exception(e) # Hatanın detayını görmek için
+    st.exception(e)
+
+
+
+
+Artık hata almamanız gerekiyor.
