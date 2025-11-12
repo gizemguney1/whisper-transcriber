@@ -6,11 +6,12 @@ import yt_dlp
 import ffmpeg
 import shutil
 
+# FFmpeg kontrolü
 if shutil.which("ffmpeg") is None:
-    st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' komutunu çalıştırın.")
+    st.error("FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' (Linux) veya 'brew install ffmpeg' (macOS) komutunu çalıştırın ya da Windows için PATH'e ekleyin.")
     st.stop()
 
-
+# OpenAI Client kurulumu
 if "OPENAI_API_KEY" in st.secrets:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 else:
@@ -20,23 +21,27 @@ else:
 st.title("Ses / Video Transkript Uygulaması")
 st.write("Bir dosya yükleyin veya link girin, metne çevirsin!")
 
-
 def reset_session():
+    """
+    Oturum durumunu temizler ve uygulamayı yeniden başlatır.
+    """
+    # Oturum durumundaki tüm anahtarları siler
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.session_state.clear()
-   
+    
+    
     if hasattr(st, "rerun"):
         st.rerun()
-    elif hasattr(st, "experimental_rerun"):
-        st.experimental_rerun()
+    elif hasattr(st, "experimental_rerun"):  
+        st.experimental_rerun()  
     else:
         st.write("Sayfayı manuel olarak yenileyin (F5).")
-
+  
 
 if st.button("🔄 Yeni İşlem Başlat"):
     reset_session()
 
+# Oturum durumu değişkenlerini başlatma
 if "transcript_text" not in st.session_state:
     st.session_state.transcript_text = None
 if "audio_ready" not in st.session_state:
@@ -45,10 +50,10 @@ if "translated_text" not in st.session_state:
     st.session_state.translated_text = None
 if "audio_path" not in st.session_state:
     st.session_state.audio_path = None
+if "temp_dir" not in st.session_state:
+    st.session_state.temp_dir = None
 
 secenek = st.radio("İşlem türü seçin:", ["Dosya yükle", "Link gir"], horizontal=True)
-temp_path = None
-audio_path = None
 
 try:
     if secenek == "Dosya yükle":
@@ -58,12 +63,18 @@ try:
         )
         if uploaded_file and not st.session_state.audio_ready:
             file_extension = os.path.splitext(uploaded_file.name)[1]
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-                temp_file.write(uploaded_file.read())
-                temp_path = temp_file.name
-            audio_path = temp_path
+            
+            # Geçici bir dizin oluştur (daha iyi temizlik için)
+            if not st.session_state.temp_dir:
+                st.session_state.temp_dir = tempfile.mkdtemp()
+                
+            temp_path = os.path.join(st.session_state.temp_dir, f"uploaded_file{file_extension}")
+            
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.read())
+            
+            st.session_state.audio_path = temp_path
             st.session_state.audio_ready = True
-            st.session_state.audio_path = audio_path
 
     elif secenek == "Link gir":
         video_url = st.text_input("Video veya ses linkini buraya yapıştırın:")
@@ -74,8 +85,10 @@ try:
 
             with st.spinner("Medya indiriliyor..."):
                 try:
-                    temp_dir = tempfile.mkdtemp()
-                    output_path = os.path.join(temp_dir, "audio.%(ext)s")
+                    if not st.session_state.temp_dir:
+                        st.session_state.temp_dir = tempfile.mkdtemp()
+                    
+                    output_path = os.path.join(st.session_state.temp_dir, "audio.%(ext)s")
 
                     ydl_opts = {
                         "format": "bestaudio/best",
@@ -91,9 +104,11 @@ try:
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         ydl.download([video_url])
 
-                    for f in os.listdir(temp_dir):
+              
+                    audio_path = None
+                    for f in os.listdir(st.session_state.temp_dir):
                         if f.endswith(".mp3"):
-                            audio_path = os.path.join(temp_dir, f)
+                            audio_path = os.path.join(st.session_state.temp_dir, f)
                             break
 
                     if audio_path:
@@ -111,14 +126,25 @@ try:
     
     if st.session_state.audio_ready and st.session_state.transcript_text is None:
         if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
-            with st.spinner("Transkript oluşturuluyor..."):
-                with open(st.session_state.audio_path, "rb") as audio_file:
-                    transcript = client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio_file
-                    )
-                st.session_state.transcript_text = transcript.text
-                st.success("Transkript tamamlandı.")
+            file_size = os.path.getsize(st.session_state.audio_path)
+            # OpenAI'nin 25 MB limitini kontrol et
+            if file_size > 25 * 1024 * 1024:
+                st.error(f"Dosya boyutu ({(file_size / 1024 / 1024):.2f} MB) 25 MB'ı aşıyor. Lütfen daha küçük bir dosya yükleyin.")
+                st.session_state.audio_ready = False # Tekrar denemeyi engelle
+            else:
+                with st.spinner("Transkript oluşturuluyor..."):
+                    try:
+                        with open(st.session_state.audio_path, "rb") as audio_file:
+                            transcript = client.audio.transcriptions.create(
+                                model="whisper-1",
+                                file=audio_file
+                            )
+                        st.session_state.transcript_text = transcript.text
+                        st.success("Transkript tamamlandı.")
+                    except Exception as e:
+                        st.error(f"Transkript oluşturulurken hata oluştu: {e}")
+                        # Hata olursa sıfırlamayı kolaylaştır
+                        st.session_state.audio_ready = False
 
     if st.session_state.transcript_text:
         st.subheader("Transkript")
@@ -132,14 +158,17 @@ try:
 
         if st.button("Türkçeye Çevir"):
             with st.spinner("Türkçeye çevriliyor..."):
-                translation = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "You are a professional translator."},
-                        {"role": "user", "content": f"Bu metni Türkçeye çevir:\n\n{st.session_state.transcript_text}"}
-                    ]
-                )
-                st.session_state.translated_text = translation.choices[0].message.content
+                try:
+                    translation = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "You are a professional translator."},
+                            {"role": "user", "content": f"Bu metni Türkçeye çevir:\n\n{st.session_state.transcript_text}"}
+                        ]
+                    )
+                    st.session_state.translated_text = translation.choices[0].message.content
+                except Exception as e:
+                    st.error(f"Çeviri sırasında hata oluştu: {e}")
 
     if st.session_state.translated_text:
         st.subheader("Türkçe Çeviri")
@@ -152,11 +181,8 @@ try:
         )
 
 except Exception as e:
-    st.error(f"Bir hata oluştu: {e}")
+    st.error(f"Beklenmedik bir hata oluştu: {e}")
 
-finally:
-    try:
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
-    except Exception:
-        pass
+
+
+#
