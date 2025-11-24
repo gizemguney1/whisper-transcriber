@@ -3,41 +3,42 @@ from openai import OpenAI
 import tempfile
 import os
 import yt_dlp
-import ffmpeg
 import shutil
 
 
-if shutil.which("ffmpeg") is None:
-    st.error(" FFmpeg sistemde yüklü değil. Lütfen 'sudo apt-get install ffmpeg' komutunu çalıştırın.")
+if os.system("ffmpeg -version") != 0:
+    st.error("FFmpeg bulunamadı. Lütfen kurulumu kontrol edin.")
     st.stop()
+
 
 if "OPENAI_API_KEY" in st.secrets:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 else:
-    st.error("Lütfen Streamlit secrets ayarlarınıza OPENAI_API_KEY ekleyin.")
+    st.error("Lütfen Streamlit secrets içine OPENAI_API_KEY ekleyin.")
     st.stop()
 
-st.title(" Ses / Video Transkript Uygulaması")
+st.title("Ses / Video Transkript Uygulaması")
 st.write("Bir dosya yükleyin veya YouTube / Instagram / TikTok linki girin, biz metne çevirelim!")
 
 
-if "transcript_text" not in st.session_state:
+def reset_states():
     st.session_state.transcript_text = None
-
-if "translated_text" not in st.session_state:
     st.session_state.translated_text = None
-
-if "audio_ready" not in st.session_state:
     st.session_state.audio_ready = False
-
-if "audio_path" not in st.session_state:
     st.session_state.audio_path = None
+
+if "transcript_text" not in st.session_state:
+    reset_states()
+
+if "last_url" not in st.session_state:
+    st.session_state.last_url = None
+
+if "last_filename" not in st.session_state:
+    st.session_state.last_filename = None
 
 
 
 secenek = st.radio("İşlem türü seçin:", ["Dosya yükle", "Link gir"], horizontal=True)
-
-temp_path = None
 
 
 if secenek == "Dosya yükle":
@@ -47,21 +48,28 @@ if secenek == "Dosya yükle":
     )
 
     if uploaded_file:
+
+        if uploaded_file.name != st.session_state.last_filename:
+            reset_states()
+            st.session_state.last_filename = uploaded_file.name
+
         file_ext = os.path.splitext(uploaded_file.name)[1]
 
+       
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as temp_file:
             temp_file.write(uploaded_file.read())
-            temp_path = temp_file.name
-
-        st.session_state.audio_path = temp_path
-        st.session_state.audio_ready = True
-
+            st.session_state.audio_path = temp_file.name
+            st.session_state.audio_ready = True
 
 
 elif secenek == "Link gir":
-    video_url = st.text_input("Video veya ses linkini buraya yapıştırın:")
+    video_url = st.text_input("Video linkini buraya yapıştırın:")
 
-    if video_url and not st.session_state.audio_ready:
+    if video_url:
+       
+        if video_url != st.session_state.last_url:
+            reset_states()
+            st.session_state.last_url = video_url
 
         if video_url.startswith(":ps"):
             video_url = "https" + video_url[3:]
@@ -78,52 +86,59 @@ elif secenek == "Link gir":
                     "postprocessors": [{
                         "key": "FFmpegExtractAudio",
                         "preferredcodec": "mp3",
-                        "preferredquality": "192",
+                        "preferredquality": "192"
                     }],
                 }
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([video_url])
 
-              
+                audio_file = None
                 for f in os.listdir(temp_dir):
                     if f.endswith(".mp3"):
-                        audio_path = os.path.join(temp_dir, f)
+                        audio_file = os.path.join(temp_dir, f)
                         break
 
-                if audio_path:
+                if audio_file:
                     st.success("Medya indirildi ve sese dönüştürüldü.")
-                    st.session_state.audio_path = audio_path
+                    st.session_state.audio_path = audio_file
                     st.session_state.audio_ready = True
                 else:
                     st.error("Ses dosyası oluşturulamadı.")
 
             except Exception as err:
-                if "login required" in str(err).lower() or "cookies" in str(err).lower():
-                    st.error(" Instagram videolarını indirmek için giriş gerekiyor. Bu içerik indirilemez.")
+                err_str = str(err).lower()
+                if "login" in err_str or "cookie" in err_str or "403" in err_str:
+                    st.error("Instagram videosu giriş gerektiriyor. Bu içerik indirilemez.")
                 else:
                     st.error(f"Medya indirilemedi: {err}")
 
 
-
 if st.session_state.audio_ready and st.session_state.transcript_text is None:
 
-    if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
-
-        with st.spinner("Transkript oluşturuluyor..."):
-            with open(st.session_state.audio_path, "rb") as audio_file:
+    try:
+        with st.spinner("Whisper modeli transkript oluşturuyor..."):
+            with open(st.session_state.audio_path, "rb") as audio:
                 transcript = client.audio.transcriptions.create(
                     model="whisper-1",
-                    file=audio_file
+                    file=audio
                 )
 
-            st.session_state.transcript_text = transcript.text
-            st.success("Transkript hazır!")
+        st.session_state.transcript_text = transcript.text
+        st.success("🎉 Transkript hazır!")
 
+        
+        try:
+            shutil.rmtree(os.path.dirname(st.session_state.audio_path), ignore_errors=True)
+        except:
+            pass
+
+    except Exception as e:
+        st.error(f"Transkript oluşturulurken hata: {e}")
 
 
 if st.session_state.transcript_text:
-    st.subheader("📄 Transkript")
+    st.subheader(" Transkript")
     st.text_area("Metin:", st.session_state.transcript_text, height=300)
 
     st.download_button(
@@ -138,11 +153,10 @@ if st.session_state.transcript_text:
             translation = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a professional translator."},
+                    {"role": "system", "content": "You are a translator."},
                     {"role": "user", "content": f"Bu metni Türkçeye çevir:\n\n{st.session_state.transcript_text}"}
                 ]
             )
-
             st.session_state.translated_text = translation.choices[0].message.content
 
 
@@ -156,4 +170,3 @@ if st.session_state.translated_text:
         file_name="transkript_turkce.txt",
         mime="text/plain"
     )
-
