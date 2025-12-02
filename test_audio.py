@@ -75,7 +75,8 @@ secenek = st.radio("İşlem türü seçin:", ["Dosya yükle", "Link gir"], horiz
 if secenek == "Dosya yükle":
     uploaded_file = st.file_uploader(
         "Dosya yükle (mp3, mp4, wav, m4a, mov, avi, mpeg4)",
-        type=["mp3", "mp4", "wav", "m4a", "mov", "avi", "mpeg4"]
+        type=["mp3", "mp4", "wav", "m4a", "mov", "avi", "mpeg4", "ogg", "oga", "opus"]
+
     )
 
     if uploaded_file:
@@ -200,3 +201,4 @@ if st.session_state.translated_text:
         file_name="transkript_turkce.txt",
         mime="text/plain"
     )
+
