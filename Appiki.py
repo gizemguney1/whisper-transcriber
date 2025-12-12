@@ -3,22 +3,22 @@ from openai import OpenAI
 import tempfile
 import os
 import yt_dlp
-import uuid
 
 # ------------------ KONTROLLER ------------------
+# FFmpeg yüklü mü kontrolü (Youtube indirme ve format işlemleri için gerekli)
 if os.system("ffmpeg -version") != 0:
-    st.error("FFmpeg bulunamadı.")
+    st.error("FFmpeg bulunamadı. Lütfen sisteme FFmpeg yükleyin.")
     st.stop()
 
 if "OPENAI_API_KEY" in st.secrets:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 else:
-    st.error("OPENAI_API_KEY eksik.")
+    st.error("OPENAI_API_KEY eksik. Lütfen secrets.toml dosyasını kontrol et.")
     st.stop()
 
-st.title("Ses / Video Transkript Uygulaması")
+st.title("Ses / Video Transkript Uygulaması (Limitsiz Mod)")
 
-# ------------------ STATE ------------------
+# ------------------ STATE YÖNETİMİ ------------------
 def reset_states():
     st.session_state.transcript_text = None
     st.session_state.audio_path = None
@@ -27,29 +27,10 @@ def reset_states():
 if "transcript_text" not in st.session_state:
     reset_states()
 
-# ------------------ AYAR ------------------
-MAX_MB = 25
-MAX_BYTES = MAX_MB * 1024 * 1024
-
-# ------------------ SIKISTIRMA (OPSİYONEL) ------------------
-def compress_audio_if_needed(input_path):
-    size = os.path.getsize(input_path)
-
-    if size <= MAX_BYTES:
-        return input_path
-
-    st.warning("Dosya 25 MB üzerinde, sıkıştırmayı deniyorum...")
-
-    output_path = f"{input_path}_compressed_{uuid.uuid4().hex}.mp3"
-    cmd = f'ffmpeg -y -i "{input_path}" -ac 1 -ar 16000 -b:a 48k "{output_path}"'
-    os.system(cmd)
-
-    return output_path  # boyutu ne olursa olsun döndür
-
-# ------------------ UI ------------------
+# ------------------ ARAYÜZ (UI) ------------------
 secenek = st.radio("İşlem türü:", ["Dosya yükle", "Link gir"], horizontal=True)
 
-# ---------- DOSYA ----------
+# ---------- DOSYA YÜKLEME ----------
 if secenek == "Dosya yükle":
     uploaded_file = st.file_uploader(
         "Dosya yükle",
@@ -57,16 +38,25 @@ if secenek == "Dosya yükle":
     )
 
     if uploaded_file:
+        # Eski dosya varsa ve yeni yükleme yapılıyorsa state'i sıfırla
+        if st.session_state.transcript_text is not None:
+             reset_states()
+             
+        # Geçici dosya oluştur
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
             tmp.write(uploaded_file.read())
             st.session_state.audio_path = tmp.name
             st.session_state.audio_ready = True
 
-# ---------- LINK ----------
+# ---------- LINK GİRME ----------
 if secenek == "Link gir":
     url = st.text_input("Video linki")
 
     if url:
+        # Yeni bir URL girildiyse önceki sonuçları temizle
+        if st.session_state.audio_ready: 
+             reset_states()
+
         with st.spinner("Medya indiriliyor..."):
             temp_dir = tempfile.mkdtemp()
             outtmpl = os.path.join(temp_dir, "audio.%(ext)s")
@@ -95,31 +85,36 @@ if secenek == "Link gir":
             except Exception as e:
                 st.error(f"İndirme hatası: {e}")
 
-# ------------------ TRANSKRİPT ------------------
+# ------------------ TRANSKRİPT İŞLEMİ ------------------
 if st.session_state.audio_ready and st.session_state.transcript_text is None:
-    with st.spinner("Whisper transkript oluşturuyor..."):
-        try:
-            final_audio = compress_audio_if_needed(st.session_state.audio_path)
+    # Eğer dosya hazırsa ama transkript yoksa işlemi başlat
+    if st.session_state.audio_path:
+        st.info(f"İşleniyor: {st.session_state.audio_path}")
+        
+        with st.spinner("Whisper transkript oluşturuyor..."):
+            try:
+                # Sıkıştırma fonksiyonu kaldırıldı, direkt dosya açılıyor
+                with open(st.session_state.audio_path, "rb") as audio:
+                    result = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio
+                    )
 
-            with open(final_audio, "rb") as audio:
-                result = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio
-                )
+                st.session_state.transcript_text = result.text
+                st.success("🎉 Transkript hazır!")
 
-            st.session_state.transcript_text = result.text
-            st.success("🎉 Transkript hazır!")
+            except Exception as e:
+                st.error(f"Whisper hata verdi: {e}")
+                st.warning("Not: OpenAI API tek seferde maksimum 25 MB dosya kabul eder. Dosyanız bundan büyük olabilir.")
 
-        except Exception as e:
-            st.error(f"Whisper hata verdi: {e}")
-
-# ------------------ GÖSTER ------------------
+# ------------------ SONUÇ GÖSTERİMİ ------------------
 if st.session_state.transcript_text:
     st.subheader("📝 Transkript")
     st.text_area("Metin", st.session_state.transcript_text, height=300)
 
     st.download_button(
-        "Transkripti indir (.txt)",
-        st.session_state.transcript_text,
-        "transkript.txt"
+        label="Transkripti indir (.txt)",
+        data=st.session_state.transcript_text,
+        file_name="transkript.txt",
+        mime="text/plain"
     )
