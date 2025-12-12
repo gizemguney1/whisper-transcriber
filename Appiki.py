@@ -3,9 +3,10 @@ from openai import OpenAI
 import tempfile
 import os
 import yt_dlp
+import shutil
+import math
 
 # ------------------ KONTROLLER ------------------
-# FFmpeg yüklü mü kontrolü (Youtube indirme ve format işlemleri için gerekli)
 if os.system("ffmpeg -version") != 0:
     st.error("FFmpeg bulunamadı. Lütfen sisteme FFmpeg yükleyin.")
     st.stop()
@@ -13,12 +14,12 @@ if os.system("ffmpeg -version") != 0:
 if "OPENAI_API_KEY" in st.secrets:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 else:
-    st.error("OPENAI_API_KEY eksik. Lütfen secrets.toml dosyasını kontrol et.")
+    st.error("OPENAI_API_KEY eksik.")
     st.stop()
 
-st.title("Ses / Video Transkript Uygulaması (Limitsiz Mod)")
+st.title("Pro: Büyük Dosya Transkript (Parçalayarak Çevir)")
 
-# ------------------ STATE YÖNETİMİ ------------------
+# ------------------ STATE ------------------
 def reset_states():
     st.session_state.transcript_text = None
     st.session_state.audio_path = None
@@ -27,94 +28,133 @@ def reset_states():
 if "transcript_text" not in st.session_state:
     reset_states()
 
-# ------------------ ARAYÜZ (UI) ------------------
+# ------------------ FONKSİYONLAR ------------------
+
+def split_audio(input_path, segment_minutes=10):
+    """
+    Dosyayı ffmpeg ile belirtilen dakika uzunluğunda parçalara böler.
+    OpenAI 25MB limiti için genelde 10-15 dk güvenlidir.
+    """
+    output_dir = tempfile.mkdtemp()
+    # Çıktı formatı: chunk000.mp3, chunk001.mp3 ...
+    output_pattern = os.path.join(output_dir, "chunk%03d.mp3")
+    
+    # Saniyeye çevir
+    seconds = segment_minutes * 60
+    
+    # ffmpeg komutu:
+    # -segment_time: kaç saniyede bir böleceği
+    # -c:a libmp3lame: mp3 formatına çevir (boyut garantisi için)
+    # -b:a 128k: transkript için yeterli yüksek kalite
+    cmd = (
+        f'ffmpeg -i "{input_path}" -f segment -segment_time {seconds} '
+        f'-c:a libmp3lame -b:a 128k "{output_pattern}" -y'
+    )
+    
+    os.system(cmd)
+    
+    # Oluşan dosyaları listele ve sırala
+    files = sorted([os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.startswith("chunk")])
+    return files, output_dir
+
+def transcribe_large_file(file_path):
+    """
+    Dosyayı böler, tek tek çevirir ve birleştirir.
+    """
+    # Dosya boyutunu kontrol et (MB)
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    
+    # Eğer dosya 24 MB'tan küçükse direkt gönder (Hızlı işlem)
+    if file_size_mb < 24:
+        with open(file_path, "rb") as audio:
+            res = client.audio.transcriptions.create(model="whisper-1", file=audio)
+        return res.text
+    
+    # Değilse parçalama işlemine başla
+    st.info(f"Dosya büyük ({file_size_mb:.2f} MB). Parçalanarak işleniyor, lütfen bekleyin...")
+    
+    # İlerleme çubuğu ekle
+    progress_text = "Dosya parçalanıyor..."
+    my_bar = st.progress(0, text=progress_text)
+    
+    chunks, temp_dir = split_audio(file_path, segment_minutes=10)
+    total_chunks = len(chunks)
+    
+    full_transcript = []
+    
+    for i, chunk in enumerate(chunks):
+        my_bar.progress((i) / total_chunks, text=f"Parça {i+1} / {total_chunks} işleniyor...")
+        
+        with open(chunk, "rb") as audio:
+            res = client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=audio
+            )
+            full_transcript.append(res.text)
+            
+    my_bar.progress(1.0, text="Tamamlandı!")
+    
+    # Geçici dosyaları temizle
+    shutil.rmtree(temp_dir)
+    
+    return " ".join(full_transcript)
+
+# ------------------ UI ------------------
 secenek = st.radio("İşlem türü:", ["Dosya yükle", "Link gir"], horizontal=True)
 
-# ---------- DOSYA YÜKLEME ----------
+# ---------- DOSYA ----------
 if secenek == "Dosya yükle":
-    uploaded_file = st.file_uploader(
-        "Dosya yükle",
-        type=["mp3", "wav", "m4a", "mp4", "mov", "avi", "ogg", "opus"]
-    )
-
+    uploaded_file = st.file_uploader("Dosya seç", type=["mp3", "wav", "m4a", "mp4", "mov", "avi"])
+    
     if uploaded_file:
-        # Eski dosya varsa ve yeni yükleme yapılıyorsa state'i sıfırla
+        # Yeni dosya yüklendiğinde eski transkripti temizle
         if st.session_state.transcript_text is not None:
              reset_states()
-             
-        # Geçici dosya oluştur
+        
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
             tmp.write(uploaded_file.read())
             st.session_state.audio_path = tmp.name
             st.session_state.audio_ready = True
 
-# ---------- LINK GİRME ----------
+# ---------- LINK ----------
 if secenek == "Link gir":
-    url = st.text_input("Video linki")
-
+    url = st.text_input("Video Linki")
     if url:
-        # Yeni bir URL girildiyse önceki sonuçları temizle
-        if st.session_state.audio_ready: 
-             reset_states()
-
-        with st.spinner("Medya indiriliyor..."):
+        if st.session_state.audio_ready: reset_states()
+        
+        with st.spinner("İndiriliyor..."):
             temp_dir = tempfile.mkdtemp()
             outtmpl = os.path.join(temp_dir, "audio.%(ext)s")
-
             ydl_opts = {
                 "format": "bestaudio/best",
                 "outtmpl": outtmpl,
-                "quiet": True,
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
+                "postprocessors": [{"key": "FFmpegExtractAudio","preferredcodec": "mp3"}],
             }
-
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
-
                 for f in os.listdir(temp_dir):
                     if f.endswith(".mp3"):
                         st.session_state.audio_path = os.path.join(temp_dir, f)
                         st.session_state.audio_ready = True
-                        break
-
             except Exception as e:
-                st.error(f"İndirme hatası: {e}")
+                st.error(str(e))
 
-# ------------------ TRANSKRİPT İŞLEMİ ------------------
-if st.session_state.audio_ready and st.session_state.transcript_text is None:
-    # Eğer dosya hazırsa ama transkript yoksa işlemi başlat
-    if st.session_state.audio_path:
-        st.info(f"İşleniyor: {st.session_state.audio_path}")
-        
-        with st.spinner("Whisper transkript oluşturuyor..."):
+# ------------------ ÇALIŞTIR BUTONU ------------------
+if st.session_state.audio_ready:
+    if st.button("Transkripti Başlat"):
+        if st.session_state.audio_path:
             try:
-                # Sıkıştırma fonksiyonu kaldırıldı, direkt dosya açılıyor
-                with open(st.session_state.audio_path, "rb") as audio:
-                    result = client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio
-                    )
-
-                st.session_state.transcript_text = result.text
-                st.success("🎉 Transkript hazır!")
-
+                with st.spinner("Yapay zeka dinliyor... Bu işlem dosya boyutuna göre zaman alabilir."):
+                    final_text = transcribe_large_file(st.session_state.audio_path)
+                    st.session_state.transcript_text = final_text
+                    st.success("İşlem başarıyla tamamlandı!")
             except Exception as e:
-                st.error(f"Whisper hata verdi: {e}")
-                st.warning("Not: OpenAI API tek seferde maksimum 25 MB dosya kabul eder. Dosyanız bundan büyük olabilir.")
+                st.error(f"Hata oluştu: {e}")
 
-# ------------------ SONUÇ GÖSTERİMİ ------------------
+# ------------------ SONUÇ ------------------
 if st.session_state.transcript_text:
-    st.subheader("📝 Transkript")
-    st.text_area("Metin", st.session_state.transcript_text, height=300)
-
-    st.download_button(
-        label="Transkripti indir (.txt)",
-        data=st.session_state.transcript_text,
-        file_name="transkript.txt",
-        mime="text/plain"
-    )
+    st.divider()
+    st.subheader("📝 Sonuç")
+    st.text_area("Metin", st.session_state.transcript_text, height=400)
+    st.download_button("Metni İndir (.txt)", st.session_state.transcript_text, "transkript.txt")
