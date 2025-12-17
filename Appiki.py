@@ -6,7 +6,7 @@ import yt_dlp
 import shutil
 import math
 
-# ------------------ KONTROLLER ------------------
+
 if os.system("ffmpeg -version") != 0:
     st.error("FFmpeg bulunamadı. Lütfen sisteme FFmpeg yükleyin.")
     st.stop()
@@ -17,9 +17,9 @@ else:
     st.error("OPENAI_API_KEY eksik.")
     st.stop()
 
-st.title("Pro: Büyük Dosya Transkript (Parçalayarak Çevir)")
+st.title("Transkript Oluşturucu")
 
-# ------------------ STATE ------------------
+
 def reset_states():
     st.session_state.transcript_text = None
     st.session_state.audio_path = None
@@ -36,16 +36,13 @@ def split_audio(input_path, segment_minutes=10):
     OpenAI 25MB limiti için genelde 10-15 dk güvenlidir.
     """
     output_dir = tempfile.mkdtemp()
-    # Çıktı formatı: chunk000.mp3, chunk001.mp3 ...
+
     output_pattern = os.path.join(output_dir, "chunk%03d.mp3")
     
-    # Saniyeye çevir
+   
     seconds = segment_minutes * 60
     
-    # ffmpeg komutu:
-    # -segment_time: kaç saniyede bir böleceği
-    # -c:a libmp3lame: mp3 formatına çevir (boyut garantisi için)
-    # -b:a 128k: transkript için yeterli yüksek kalite
+
     cmd = (
         f'ffmpeg -i "{input_path}" -f segment -segment_time {seconds} '
         f'-c:a libmp3lame -b:a 128k "{output_pattern}" -y'
@@ -53,7 +50,7 @@ def split_audio(input_path, segment_minutes=10):
     
     os.system(cmd)
     
-    # Oluşan dosyaları listele ve sırala
+  
     files = sorted([os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.startswith("chunk")])
     return files, output_dir
 
@@ -61,19 +58,19 @@ def transcribe_large_file(file_path):
     """
     Dosyayı böler, tek tek çevirir ve birleştirir.
     """
-    # Dosya boyutunu kontrol et (MB)
+    
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
     
-    # Eğer dosya 24 MB'tan küçükse direkt gönder (Hızlı işlem)
+ 
     if file_size_mb < 24:
         with open(file_path, "rb") as audio:
             res = client.audio.transcriptions.create(model="whisper-1", file=audio)
         return res.text
     
-    # Değilse parçalama işlemine başla
+    
     st.info(f"Dosya büyük ({file_size_mb:.2f} MB). Parçalanarak işleniyor, lütfen bekleyin...")
     
-    # İlerleme çubuğu ekle
+   
     progress_text = "Dosya parçalanıyor..."
     my_bar = st.progress(0, text=progress_text)
     
@@ -94,12 +91,12 @@ def transcribe_large_file(file_path):
             
     my_bar.progress(1.0, text="Tamamlandı!")
     
-    # Geçici dosyaları temizle
+    dım
     shutil.rmtree(temp_dir)
     
     return " ".join(full_transcript)
 
-# ------------------ UI ------------------
+
 secenek = st.radio("İşlem türü:", ["Dosya yükle", "Link gir"], horizontal=True)
 
 # ---------- DOSYA ----------
@@ -107,7 +104,7 @@ if secenek == "Dosya yükle":
     uploaded_file = st.file_uploader("Dosya seç", type=["mp3", "wav", "m4a", "mp4", "mov", "avi"])
     
     if uploaded_file:
-        # Yeni dosya yüklendiğinde eski transkripti temizle
+       
         if st.session_state.transcript_text is not None:
              reset_states()
         
@@ -116,7 +113,7 @@ if secenek == "Dosya yükle":
             st.session_state.audio_path = tmp.name
             st.session_state.audio_ready = True
 
-# ---------- LINK ----------
+
 if secenek == "Link gir":
     url = st.text_input("Video Linki")
     if url:
@@ -140,7 +137,6 @@ if secenek == "Link gir":
             except Exception as e:
                 st.error(str(e))
 
-# ------------------ ÇALIŞTIR BUTONU ------------------
 if st.session_state.audio_ready:
     if st.button("Transkripti Başlat"):
         if st.session_state.audio_path:
@@ -152,7 +148,7 @@ if st.session_state.audio_ready:
             except Exception as e:
                 st.error(f"Hata oluştu: {e}")
 
-# ------------------ SONUÇ ------------------
+
 if st.session_state.transcript_text:
     st.divider()
     st.subheader("📝 Sonuç")
