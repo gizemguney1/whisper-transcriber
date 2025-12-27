@@ -4,6 +4,7 @@ import tempfile
 import os
 import yt_dlp
 import shutil
+import math
 
 # --- FFmpeg Kontrolü ---
 if os.system("ffmpeg -version") != 0:
