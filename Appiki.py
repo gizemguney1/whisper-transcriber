@@ -6,17 +6,6 @@ import yt_dlp
 import shutil
 import math
 
-# --- FFmpeg Kontrolü ---
-if os.system("ffmpeg -version") != 0:
-    st.error("FFmpeg bulunamadı. Lütfen sisteme FFmpeg yükleyin.")
-    st.stop()
-
-# --- API Anahtarı Kontrolü ---
-if "OPENAI_API_KEY" in st.secrets:
-    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-else:
-    st.error("OPENAI_API_KEY eksik.")
-    st.stop()
 
 st.title("Transkript Oluşturucu")
 
