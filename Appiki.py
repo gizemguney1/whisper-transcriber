@@ -4,12 +4,18 @@ import tempfile
 import os
 import yt_dlp
 import shutil
-import math
 
+# --- 1. OPENAI CLIENT BAŞLATMA ---
+# Hata almamak için client en başta tanımlanmalıdır
+if "OPENAI_API_KEY" in st.secrets:
+    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+else:
+    st.error("OPENAI_API_KEY eksik! Lütfen Secrets paneline ekleyin.")
+    st.stop()
 
 st.title("Transkript Oluşturucu")
 
-# --- Durum Yönetimi ---
+# --- 2. DURUM YÖNETİMİ ---
 if "transcript_text" not in st.session_state:
     st.session_state.transcript_text = None
 if "audio_path" not in st.session_state:
@@ -22,12 +28,13 @@ def reset_states():
     st.session_state.audio_path = None
     st.session_state.audio_ready = False
 
-# ------------------ FONKSİYONLAR ------------------
+# --- 3. FONKSİYONLAR ---
 
 def split_audio(input_path, segment_minutes=10):
     output_dir = tempfile.mkdtemp()
     output_pattern = os.path.join(output_dir, "chunk%03d.mp3")
     seconds = segment_minutes * 60
+    # FFmpeg komutu arka planda çalışır
     cmd = f'ffmpeg -i "{input_path}" -f segment -segment_time {seconds} -c:a libmp3lame -b:a 128k "{output_pattern}" -y'
     os.system(cmd)
     files = sorted([os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.startswith("chunk")])
@@ -35,50 +42,56 @@ def split_audio(input_path, segment_minutes=10):
 
 def transcribe_large_file(file_path):
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    
+    # 25MB altı için direkt işlem
     if file_size_mb < 24:
         with open(file_path, "rb") as audio:
             res = client.audio.transcriptions.create(model="whisper-1", file=audio)
         return res.text
     
+    # Büyük dosyalar için bölme işlemi
     st.info(f"Dosya büyük ({file_size_mb:.2f} MB). İşleniyor...")
     my_bar = st.progress(0, text="Dosya parçalanıyor...")
     chunks, temp_dir = split_audio(file_path, segment_minutes=10)
+    
     full_transcript = []
     for i, chunk in enumerate(chunks):
         my_bar.progress((i) / len(chunks), text=f"Parça {i+1} / {len(chunks)} işleniyor...")
         with open(chunk, "rb") as audio:
             res = client.audio.transcriptions.create(model="whisper-1", file=audio)
             full_transcript.append(res.text)
+            
     my_bar.progress(1.0, text="Tamamlandı!")
     shutil.rmtree(temp_dir)
     return " ".join(full_transcript)
 
-# ------------------ ARAYÜZ ------------------
+# --- 4. ARAYÜZ ---
 
 secenek = st.radio("İşlem türü:", ["Dosya yükle", "Link gir"], horizontal=True)
 
 if secenek == "Dosya yükle":
-    uploaded_file = st.file_uploader("Dosya seç", type=["mp3", "wav", "m4a", "mp4", "mov", "avi"])
+    uploaded_file = st.file_uploader("Dosya seç", type=["mp3", "wav", "m4a", "mp4", "mov", "avi", "mpeg4"])
     if uploaded_file:
-        reset_states()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
-            tmp.write(uploaded_file.read())
-            st.session_state.audio_path = tmp.name
-            st.session_state.audio_ready = True
+        if st.session_state.audio_path is None: # Sadece yeni dosya seçildiğinde resetle
+            reset_states()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+                tmp.write(uploaded_file.read())
+                st.session_state.audio_path = tmp.name
+                st.session_state.audio_ready = True
 
 if secenek == "Link gir":
     url = st.text_input("Video Linki (Instagram/YouTube)")
     if url:
         if st.button("Videoyu İndir"):
             reset_states()
-            with st.spinner("İndiriliyor (Bu biraz zaman alabilir)..."):
+            with st.spinner("İndiriliyor..."):
                 temp_dir = tempfile.mkdtemp()
                 outtmpl = os.path.join(temp_dir, "audio.%(ext)s")
                 
-                # --- SECRETS'TAN ÇEREZLERİ DOSYAYA DÖNÜŞTÜRME ---
+                # Secrets'tan çerezleri alma
                 cookie_path = None
                 if "INSTAGRAM_COOKIES" in st.secrets:
-                    cookie_path = os.path.join(temp_dir, "temp_cookies.txt")
+                    cookie_path = os.path.join(temp_dir, "cookies.txt")
                     with open(cookie_path, "w", encoding="utf-8") as f:
                         f.write(st.secrets["INSTAGRAM_COOKIES"])
                 
@@ -86,9 +99,8 @@ if secenek == "Link gir":
                     "format": "bestaudio/best",
                     "outtmpl": outtmpl,
                     "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}],
-                    "cookiefile": cookie_path, # Çerez dosyasını burada tanıtıyoruz
+                    "cookiefile": cookie_path,
                     "quiet": True,
-                    "no_warnings": True,
                 }
                 
                 try:
@@ -102,16 +114,18 @@ if secenek == "Link gir":
                 except Exception as e:
                     st.error(f"İndirme hatası: {str(e)}")
 
+# --- 5. TRANSKRİPT BAŞLATMA ---
 if st.session_state.audio_ready:
     if st.button("Transkripti Başlat"):
         try:
-            with st.spinner("Yapay zeka dinliyor..."):
+            with st.spinner("Yapay zeka dinliyor... Bu işlem dosya boyutuna göre zaman alabilir."):
                 final_text = transcribe_large_file(st.session_state.audio_path)
                 st.session_state.transcript_text = final_text
                 st.success("İşlem başarıyla tamamlandı!")
         except Exception as e:
-            st.error(f"Hata: {e}")
+            st.error(f"Hata oluştu: {e}")
 
+# --- 6. SONUÇ GÖSTERİMİ ---
 if st.session_state.transcript_text:
     st.divider()
     st.subheader("📝 Sonuç")
